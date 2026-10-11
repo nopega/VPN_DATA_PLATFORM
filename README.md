@@ -38,10 +38,12 @@ Built with Terraform, one folder per stage, each applied on its own.
 |---|---|---|---|
 | `terraform/01_vpc` | VPC, subnets in 2 zones (as in the diagram), internet gateway, route tables, S3 gateway endpoint; NAT optional | **$0** (NAT off) | written |
 | `terraform/02_tailscale_router` | one t4g.nano: Tailscale subnet router for `10.42.0.0/16` **and** NAT instance for the private subnets | ~$8.50/mo | written |
-| `terraform/03_eks` | EKS 1.36, **private API endpoint only**, 1 × t3.medium on-demand, Spot group at 0 | ~$115/mo (control plane ~$73 + node ~$42) | written |
+| `terraform/03_eks` | EKS 1.36, **private API endpoint only**, 1 × t3.xlarge on-demand, Spot group at 0, prefix delegation (110 pods/node) | ~$230/mo (control plane ~$73 + node ~$157) | written |
 | `terraform/04_ingress` | wildcard certificate `*.nopega.net`, AWS Load Balancer Controller, external-dns; `smoke-test.yaml` proves the path | ~$18/mo once an internal ALB exists | written |
 | `terraform/05_argocd` | Argo CD v3.5.0 at `argocd.nopega.net`, on the shared internal ALB | $0 extra (shares the ALB) | written |
-| later | git repo + root Application, then the platform components through Argo CD | — | not started |
+| `argocd/` | app-of-apps: `root.yaml` (applied once) watches `argocd/apps/` in this repository | — | running (smoke-test) |
+| `terraform/06_data_foundation` | warehouse + logs buckets, RDS PostgreSQL 17, Polaris IAM roles (Pod Identity) | ~$21/mo | written |
+| later | Polaris, Trino, monitoring, Airflow, Spark operator, Harbor — as Argo CD Applications | — | not started |
 
 Known gaps and their deadlines: [BACKLOG.md](BACKLOG.md).
 
@@ -55,7 +57,7 @@ $0.045/GB). The cost of that choice is one machine as a shared point of
 failure for the way in and the way out. The NAT gateway remains available as
 `enable_nat_gateway = true` in stage 01 (with `act_as_nat = false` in 02).
 
-Destroy stages in reverse order: 05, 04, 03, 02, then 01 — and before 04, delete
+Destroy stages in reverse order: 06, 05, 04, 03, 02, then 01 — and before 04, delete
 every Ingress (`kubectl delete -f smoke-test.yaml`), or its ALB is orphaned.
 
 ## Running a stage

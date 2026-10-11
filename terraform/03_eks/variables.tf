@@ -34,13 +34,20 @@ variable "kubernetes_version" {
 
 variable "ondemand_instance_type" {
   description = <<-EOT
-    t3.medium (2 vCPU, 4 GiB, ~$39/mo in Singapore) is enough to bring the
-    cluster up with its system pods. The platform components need more: the
-    original ran 5 x m5.large. Raise this, or the node count, as components
-    are added -- not before.
+    t3.xlarge: 4 vCPU, 16 GiB (~14 GiB allocatable), ~$155/mo in Singapore.
+
+    Was t3.medium (2 vCPU, 4 GiB) to bring the cluster up. That stopped being
+    enough at the first data component: with the original platform's
+    settings a Trino worker requests 4 GiB and the coordinator 2 GiB, while
+    a t3.medium has ~3.3 GiB allocatable in total -- the worker could never
+    be scheduled anywhere. 16 GiB fits Polaris + full-size Trino +
+    monitoring; Airflow and Spark drivers will need a second node.
+
+    Changing this replaces the node group (create_before_destroy): new node
+    up first, then the old one is drained.
   EOT
   type        = string
-  default     = "t3.medium"
+  default     = "t3.xlarge"
 }
 
 variable "ondemand_min" {

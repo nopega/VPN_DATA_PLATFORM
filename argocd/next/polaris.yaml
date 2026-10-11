@@ -1,0 +1,59 @@
+# Apache Polaris 1.5.0 -- the Iceberg REST catalog.
+#
+# Kept in argocd/next/ until bootstrap/polaris.sh has run (database, the
+# polaris-persistence Secret, realm bootstrap). Then: git mv to argocd/apps/
+# and push. root watches apps/ only, so nothing here is applied before that.
+#
+# The chart is vendored in argocd/charts/polaris -- the same files the
+# original platform ran, including its edits. Everything that differs here is
+# set in valuesObject below, which overrides the vendored values.yaml.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: polaris
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/nopega/VPN_DATA_PLATFORM.git
+    targetRevision: main
+    path: argocd/charts/polaris
+    helm:
+      valuesObject:
+        # The chart creates the service account; terraform/06 already bound
+        # it to the polaris-service IAM role through Pod Identity
+        # (namespace polaris, name polaris). No annotation needed -- unlike
+        # IRSA, Pod Identity matches on namespace + name alone.
+        serviceAccount:
+          create: true
+          name: polaris
+
+        realmContext:
+          realms:
+            - vpn-data-platform
+
+        persistence:
+          type: relational-jdbc
+          relationalJdbc:
+            secret:
+              name: polaris-persistence
+
+        nodeSelector:
+          workload: critical
+
+        resources:
+          requests: { cpu: 250m, memory: 512Mi }
+          limits: { cpu: "1", memory: 1Gi }
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: polaris
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -11,11 +11,16 @@ pods, and a Spot group sitting at zero for Spark executors later.
 | | per hour | per month, left on |
 |---|---|---|
 | EKS control plane (standard support) | $0.10 | ~$73 |
-| 1 × t3.medium on-demand | $0.053 | ~$39 |
+| 1 × t3.xlarge on-demand (was t3.medium, see below) | $0.211 | ~$154 |
 | 30 GiB gp3 on that node | | ~$3 |
 | Spot group at 0 nodes | $0 | $0 |
 | router from stage 02 | | ~$8.50 |
-| **total** | | **~$123** |
+| **total** | | **~$238** |
+
+**Why t3.xlarge.** The cluster came up on a t3.medium (4 GiB, ~3.3 GiB
+allocatable). The first data component ruled it out: a Trino worker requests
+4 GiB on its own — more than the whole node — so it would stay `Pending`
+forever. 16 GiB holds Polaris, full-size Trino and monitoring.
 
 The control plane bills from the moment it exists, whether or not anything
 runs on it, and cannot be stopped — only deleted. `t3` instances run in
