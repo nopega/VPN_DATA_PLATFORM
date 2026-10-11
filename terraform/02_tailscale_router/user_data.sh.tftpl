@@ -1,0 +1,104 @@
+#!/bin/bash
+# First-boot script for the router. Rendered by Terraform (templatefile), so
+# $${...} is filled in before the instance ever sees it. Runs once, as root.
+#
+# Log: /var/log/router-bootstrap.log  (read it through Session Manager)
+
+set -euo pipefail
+exec > >(tee -a /var/log/router-bootstrap.log) 2>&1
+echo "== router bootstrap $(date -Is) =="
+
+# ---------------------------------------------------------------------------
+# 0. Swap, before anything else.
+#    A t4g.nano has 0.5 GiB of memory, and dnf loading its package metadata
+#    alone needs more than that: on the first build the kernel's
+#    out-of-memory killer killed `dnf install`, the script stopped, and
+#    Tailscale was never installed. 1 GiB of swap on the root disk costs
+#    nothing extra and lets dnf finish (slowly). Steady state -- tailscaled
+#    plus iptables -- fits in memory without it.
+# ---------------------------------------------------------------------------
+if ! swapon --show=NAME --noheadings | grep -qx /swapfile; then
+  dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+  chmod 0600 /swapfile
+  mkswap /swapfile >/dev/null
+  swapon /swapfile
+  echo '/swapfile none swap defaults 0 0' >> /etc/fstab
+fi
+free -m
+
+# ---------------------------------------------------------------------------
+# 1. Let the kernel forward packets that are not addressed to this machine.
+#    Both jobs -- subnet router and NAT -- are nothing but forwarding.
+# ---------------------------------------------------------------------------
+cat > /etc/sysctl.d/99-router.conf <<'EOF'
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+EOF
+sysctl --system >/dev/null
+
+%{ if act_as_nat ~}
+# ---------------------------------------------------------------------------
+# 2. NAT for the private subnets.
+#    Packets from the VPC, going somewhere outside the VPC, leave with this
+#    machine's address as the source (MASQUERADE). The internet gateway then
+#    maps that to the public address, exactly as it does for this machine's
+#    own traffic.
+#    Installed as a systemd unit so the rule comes back after a reboot.
+# ---------------------------------------------------------------------------
+dnf install -y -q iptables-nft
+
+cat > /usr/local/sbin/router-nat.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+IFACE="$(ip route show default | awk '{print $5; exit}')"
+RULE=(-s ${vpc_cidr} ! -d ${vpc_cidr} -o "$IFACE" -j MASQUERADE)
+iptables -t nat -C POSTROUTING "$${RULE[@]}" 2>/dev/null \
+  || iptables -t nat -A POSTROUTING "$${RULE[@]}"
+EOF
+chmod 0755 /usr/local/sbin/router-nat.sh
+
+cat > /etc/systemd/system/router-nat.service <<'EOF'
+[Unit]
+Description=NAT for the VPC private subnets
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/router-nat.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now router-nat.service
+echo "NAT rule installed"
+%{ endif ~}
+
+# ---------------------------------------------------------------------------
+# 3. Tailscale, advertising the VPC range.
+#    The auth key is fetched here, at boot, with the instance's own role --
+#    it is never in Terraform's state or in this script's rendered text.
+# ---------------------------------------------------------------------------
+curl -fsSL https://tailscale.com/install.sh | sh
+systemctl enable --now tailscaled
+
+AUTH_KEY="$(aws secretsmanager get-secret-value \
+  --region '${region}' \
+  --secret-id '${secret_id}' \
+  --query SecretString --output text)"
+
+# --accept-dns=false: keep using the VPC's own resolver (10.42.0.2); this
+#   machine must resolve AWS names the way everything else in the VPC does.
+# Source addresses of forwarded packets are rewritten to this machine by
+#   default (snat-subnet-routes), so nothing in the VPC needs a route back
+#   to Tailscale's 100.x.y.z addresses.
+tailscale up \
+  --auth-key="$AUTH_KEY" \
+  --hostname='${hostname}' \
+  --advertise-routes='${vpc_cidr}' \
+  --accept-dns=false
+unset AUTH_KEY
+
+echo "== done. Approve the route ${vpc_cidr} in the Tailscale admin console if it is not auto-approved. =="

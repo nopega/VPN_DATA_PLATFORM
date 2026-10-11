@@ -1,0 +1,2 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+cloudflare_zone_id = "paste-the-zone-id-of-nopega.net-here"

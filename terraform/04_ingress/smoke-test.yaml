@@ -1,0 +1,89 @@
+# End-to-end test of the way in: one nginx pod behind the internal ALB at
+# https://test.nopega.net. Applied and deleted by hand with kubectl -- it is a
+# probe, not part of the platform.
+#
+#   kubectl apply  -f smoke-test.yaml
+#   kubectl delete -f smoke-test.yaml     # BEFORE `terraform destroy` here
+#
+# Delete it first because the ALB it creates is owned by the controller, not
+# by Terraform. Destroy the controller while the Ingress still exists and the
+# ALB and its security group are orphaned -- still billing, and blocking the
+# VPC from being deleted in stage 01.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: smoke-test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: smoke-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: nginx }
+  template:
+    metadata:
+      labels: { app: nginx }
+    spec:
+      containers:
+        - name: nginx
+          # ECR Public mirror of the Docker Official Image: no Docker Hub
+          # pull-rate limit through the shared NAT address.
+          image: public.ecr.aws/docker/library/nginx:alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: smoke-test
+spec:
+  selector: { app: nginx }
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx
+  namespace: smoke-test
+  annotations:
+    # internal: the ALB gets addresses in the PRIVATE subnets only (the ones
+    # tagged kubernetes.io/role/internal-elb in stage 01). No public address
+    # exists to reach -- this replaces the original platform's allowlist.
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    # Every platform Ingress will share this group, so they share ONE ALB.
+    alb.ingress.kubernetes.io/group.name: vpn-data-platform-internal
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    # Only from inside the VPC. Tailscale users arrive with the router's VPC
+    # address as their source, so this admits them and nobody else.
+    alb.ingress.kubernetes.io/inbound-cidrs: 10.42.0.0/16
+    alb.ingress.kubernetes.io/healthcheck-path: /
+spec:
+  ingressClassName: alb
+  # No certificate ARN anywhere: the controller looks up an ACM certificate
+  # that covers these hosts and finds *.nopega.net from stage 04.
+  tls:
+    - hosts:
+        - test.nopega.net
+  rules:
+    - host: test.nopega.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx
+                port:
+                  number: 80

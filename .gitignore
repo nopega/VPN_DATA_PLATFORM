@@ -1,0 +1,9 @@
+# Terraform working files and state. State can contain secrets and account
+# details; it never goes into git.
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!*.tfvars.example
+.terraform.tfstate.lock.info
