@@ -44,7 +44,8 @@ Built with Terraform, one folder per stage, each applied on its own.
 | apps | **[vpn-data-platform-apps](https://github.com/nopega/vpn-data-platform-apps)** — what runs in the cluster. `root` is created by stage 05 and watches its `apps/` folder | — | separate repo |
 | `bootstrap/` | one-time secrets/database steps an app needs before Argo CD starts it (they touch AWS, so they live here) | — | polaris, trino |
 | `terraform/06_data_foundation` | warehouse + logs buckets, RDS PostgreSQL 17, Polaris IAM roles (Pod Identity) | ~$21/mo | written |
-| later | Polaris, Trino, monitoring, Airflow, Spark operator, Harbor — as Argo CD Applications | — | not started |
+| `terraform/07_karpenter` | Karpenter 1.14.1 (controller IAM via Pod Identity, Spot interruption queue, discovery tags). NodePools live in the apps repo | cents + the nodes it launches | written |
+| later | monitoring, Harbor, Airflow, Spark operator — as Argo CD Applications in the apps repo | — | not started |
 
 Known gaps and their deadlines: [BACKLOG.md](BACKLOG.md).
 
