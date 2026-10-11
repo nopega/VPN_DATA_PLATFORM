@@ -20,6 +20,17 @@ variable "chart_version" {
   default     = "10.3.0"
 }
 
+variable "apps_repo_url" {
+  description = "Git repository root watches (its apps/ folder). Public, so Argo CD needs no credentials."
+  type        = string
+  default     = "https://github.com/nopega/vpn-data-platform-apps.git"
+}
+
+variable "apps_repo_revision" {
+  type    = string
+  default = "main"
+}
+
 variable "vpc_cidr" {
   description = "Only this range may reach the ALB: in practice, the Tailscale router."
   type        = string

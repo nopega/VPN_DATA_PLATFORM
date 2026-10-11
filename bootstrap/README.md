@@ -10,7 +10,8 @@ same values.
 
 | Script | Run after | Before pushing |
 |---|---|---|
-| `polaris.sh` | `terraform/06_data_foundation` | `git mv argocd/next/polaris.yaml argocd/apps/` |
+| `polaris.sh` | `terraform/06_data_foundation` | moving `next/polaris.yaml` to `apps/` in vpn-data-platform-apps |
 | `polaris_catalog.sh` | Polaris pod `Running` | Trino (needs the catalog to exist) |
+| `trino.sh` | `polaris_catalog.sh` | moving `next/trino.yaml` to `apps/` in vpn-data-platform-apps (and deleting the old `trino` record in Cloudflare) |
 
 All need Tailscale connected (kubectl, and psql to RDS, go through it).

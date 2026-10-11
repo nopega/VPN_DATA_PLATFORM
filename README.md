@@ -41,7 +41,8 @@ Built with Terraform, one folder per stage, each applied on its own.
 | `terraform/03_eks` | EKS 1.36, **private API endpoint only**, 1 × t3.xlarge on-demand, Spot group at 0, prefix delegation (110 pods/node) | ~$230/mo (control plane ~$73 + node ~$157) | written |
 | `terraform/04_ingress` | wildcard certificate `*.nopega.net`, AWS Load Balancer Controller, external-dns; `smoke-test.yaml` proves the path | ~$18/mo once an internal ALB exists | written |
 | `terraform/05_argocd` | Argo CD v3.5.0 at `argocd.nopega.net`, on the shared internal ALB | $0 extra (shares the ALB) | written |
-| `argocd/` | app-of-apps: `root.yaml` (applied once) watches `argocd/apps/` in this repository | — | running (smoke-test) |
+| apps | **[vpn-data-platform-apps](https://github.com/nopega/vpn-data-platform-apps)** — what runs in the cluster. `root` is created by stage 05 and watches its `apps/` folder | — | separate repo |
+| `bootstrap/` | one-time secrets/database steps an app needs before Argo CD starts it (they touch AWS, so they live here) | — | polaris, trino |
 | `terraform/06_data_foundation` | warehouse + logs buckets, RDS PostgreSQL 17, Polaris IAM roles (Pod Identity) | ~$21/mo | written |
 | later | Polaris, Trino, monitoring, Airflow, Spark operator, Harbor — as Argo CD Applications | — | not started |
 

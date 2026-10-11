@@ -18,6 +18,11 @@ stops being optional. Written 12 October 2026, after stages 01–05.
 
 | Item | Why |
 |---|---|
+| ALB idle timeout for Trino | A wide scan's first response can exceed the ALB's 60 s idle timeout. `alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=600` fixes it, but must be set on **every** Ingress in the `vpn-data-platform-internal` group at once (Argo CD in terraform/05, smoke-test, Trino) -- a mismatch makes the controller reject the newest Ingress. |
+| Dedicated Polaris principal for Trino | Trino uses the Polaris root credential, as the original did. A principal with only the catalog roles Trino needs would limit the damage if that credential leaked. |
+| Catalog creation as an Argo CD PostSync Job | `bootstrap/polaris_catalog.sh` is run by hand from the Mac after Polaris is up. A PostSync hook Job in the Polaris Application would create the catalog in-cluster, automatically, on every rebuild. (`bootstrap/polaris.sh` stays manual on purpose: it needs the RDS master login, which should not live in the cluster.) |
+| Cluster autoscaler or Karpenter -- **before Spark** | Nothing adds nodes: the Spot group stays at 0 and a full on-demand node leaves pods `Pending` forever. Spark executors are meant for Spot, so this must exist before the first Spark job. |
+| EBS volumes are pinned to one zone | The on-demand node can land in 1a or 1b. A PersistentVolume created in one zone cannot follow a pod to the other; after a node replacement into the other zone, that pod stays `Pending`. Same failure the original platform hit with Prometheus. Options: a node group per zone, or `volumeBindingMode: WaitForFirstConsumer` plus keeping a node in each zone. |
 | Router recovers itself | If the instance fails, nothing replaces it: users lose the way in, nodes lose the way out. An Auto Scaling group of one, or an EC2 recover alarm, would bring it back without a human. |
 | Router OS updates | It accepts UDP from the internet (Tailscale's port) and nothing patches it. `dnf upgrade` on a schedule, or rebuild it from the latest AMI periodically. |
 | Old ACM validation records in Cloudflare | Seven `_….nopega.net` CNAMEs for the old per-name certificates. Harmless, just clutter. **Do not delete `_d23aca41….nopega.net`** — it belongs to the current wildcard certificate and ACM re-reads it to renew. |

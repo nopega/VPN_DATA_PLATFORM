@@ -65,7 +65,13 @@ resource "helm_release" "argocd" {
         # TLS ends at the ALB. Inside the cluster the server answers HTTP.
         "server.insecure" = true
       }
+      cm = {
+        "resource.customizations.health.argoproj.io_Application" = local.application_health_lua
+      }
     }
+
+    # root Application -> apps/ in the app repository (root.tf).
+    extraObjects = [local.root_application]
 
     controller     = { resources = local.resources.controller }
     repoServer     = { resources = local.resources.repoServer }

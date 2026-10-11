@@ -156,4 +156,4 @@ PY
 fi
 
 echo ""
-echo "Done. Next: git mv argocd/next/polaris.yaml argocd/apps/ && git commit && git push"
+echo "Done. Next: in vpn-data-platform-apps, move next/polaris.yaml to apps/ and push."
