@@ -56,7 +56,25 @@ secret_create() {   # name, json on stdin -- never on the command line
   aws secretsmanager create-secret --region "$REGION" --name "$1" \
     --secret-string file:///dev/stdin >/dev/null
 }
+secret_put() {      # name, json on stdin
+  aws secretsmanager put-secret-value --region "$REGION" --secret-id "$1" \
+    --secret-string file:///dev/stdin >/dev/null
+}
 genpw() { openssl rand -base64 64 | tr -dc 'A-Za-z0-9' | head -c "${1:-32}"; }
+
+# Harbor's token service only reads PKCS#1 keys ("BEGIN RSA PRIVATE KEY");
+# a PKCS#8 key ("BEGIN PRIVATE KEY") makes every docker login fail with a 500
+# and "unable to get PrivateKey from PEM type: PRIVATE KEY" in harbor-core.
+# OpenSSL 3 writes PKCS#8 by default and needs -traditional; macOS's LibreSSL
+# has no -traditional and already writes PKCS#1 from `openssl rsa`.
+to_pkcs1() {        # key file, converted in place
+  head -1 "$1" | grep -q 'BEGIN RSA PRIVATE KEY' && return 0
+  openssl rsa -in "$1" -out "$1.rsa" -traditional 2>/dev/null \
+    || openssl rsa -in "$1" -out "$1.rsa" 2>/dev/null
+  head -1 "$1.rsa" | grep -q 'BEGIN RSA PRIVATE KEY' \
+    || { echo "ERROR: could not convert the token key to PKCS#1" >&2; exit 1; }
+  mv "$1.rsa" "$1"
+}
 
 if [ "${1:-}" = "show" ]; then
   secret_get "$INTERNAL_SECRET" | field adminPassword
@@ -145,17 +163,33 @@ fi
 # ---------------------------------------------------------------------------
 echo "[3/4] internal secrets"
 
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
 if secret_exists "$INTERNAL_SECRET"; then
   echo "      reusing $INTERNAL_SECRET"
+  # Repair a token key saved as PKCS#8 by an earlier version of this script.
+  # Same key, different encoding: the certificate stays valid.
+  secret_get "$INTERNAL_SECRET" > "$WORK/internal.json"
+  python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['tokenKey'], end='')" \
+    "$WORK/internal.json" > "$WORK/token.key"
+  if ! head -1 "$WORK/token.key" | grep -q 'BEGIN RSA PRIVATE KEY'; then
+    to_pkcs1 "$WORK/token.key"
+    python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1])); d['tokenKey'] = open(sys.argv[2]).read()
+print(json.dumps(d))" "$WORK/internal.json" "$WORK/token.key" | secret_put "$INTERNAL_SECRET"
+    echo "      token key converted to PKCS#1 -- restart harbor-core after this script"
+  fi
 else
-  WORK="$(mktemp -d)"
-  trap 'rm -rf "$WORK"' EXIT
 
   # Token signing key: Harbor signs registry access tokens with it. Ten years,
   # because the chart's own default (one year) expires silently and every
   # docker login starts failing on the anniversary.
-  openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=harbor-token-ca" \
-    -keyout "$WORK/token.key" -out "$WORK/token.crt" 2>/dev/null
+  openssl genrsa -out "$WORK/token.key" 4096 2>/dev/null
+  to_pkcs1 "$WORK/token.key"
+  openssl req -x509 -new -key "$WORK/token.key" -days 3650 -subj "/CN=harbor-token-ca" \
+    -out "$WORK/token.crt" 2>/dev/null
 
   REGISTRY_PASSWORD="$(genpw 32)"
   # Fixed once: a new bcrypt salt on every run would change the Secret, and
