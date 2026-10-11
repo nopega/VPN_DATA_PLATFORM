@@ -59,13 +59,26 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
 resource "aws_s3_bucket_lifecycle_configuration" "logs" {
   bucket = aws_s3_bucket.this["logs"].id
 
+  # Only objects larger than 0 bytes expire. Zero-byte "directory" markers
+  # stay: Spark refuses to start if spark.eventLog.dir (spark-events/, made
+  # by stage 09) does not exist, and it would stop existing 30 days after the
+  # last job if the marker expired with the logs.
   rule {
     id     = "expire-logs"
     status = "Enabled"
-    filter {}
+    filter {
+      object_size_greater_than = 0
+    }
     expiration {
       days = var.logs_retention_days
     }
+  }
+
+  # Separate rule: S3 does not allow an object-size filter on this action.
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+    filter {}
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
     }
