@@ -22,6 +22,25 @@ runs on it, and cannot be stopped — only deleted. `t3` instances run in
 "unlimited" CPU-credit mode, so sustained high CPU can add a small charge on
 top of the hourly price.
 
+## Prefix delegation: 110 pods per node, not 17
+
+A t3.medium can hold only 17 pod addresses in the default VPC CNI mode — the
+first node hit that limit with system pods, the load balancer controller,
+external-dns and Argo CD, while its CPU and memory were mostly idle. The
+`vpc-cni` add-on runs with `ENABLE_PREFIX_DELEGATION=true`: each network
+interface slot holds a /28 prefix (16 addresses) instead of one address, and
+the managed node group sets max pods to 110 by itself.
+
+It only applies to nodes launched after the setting, so node groups use a
+name *prefix* with `create_before_destroy`: a change that needs new nodes
+brings the new group up first, then drains and deletes the old one.
+
+Check a node's limit:
+
+```bash
+kubectl get nodes -o custom-columns=NAME:.metadata.name,MAXPODS:.status.capacity.pods
+```
+
 ## What is different from the original cluster
 
 | | original (eksctl) | this stage |

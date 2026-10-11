@@ -117,6 +117,27 @@ resource "aws_eks_addon" "vpc_cni" {
   cluster_name                = aws_eks_cluster.this.name
   addon_name                  = "vpc-cni"
   resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  # Prefix delegation. Without it, every pod takes one secondary address on
+  # one of the node's network interfaces, and a t3.medium has room for only
+  # 17 pods -- reached after system pods, the load balancer controller,
+  # external-dns and Argo CD, on a node with most of its CPU and memory idle.
+  # With it, each interface slot holds a /28 prefix (16 addresses), and the
+  # node group computes max pods itself: 110 on anything under 30 vCPUs.
+  #
+  # Takes effect only on nodes launched AFTER this is set -- which is why
+  # the node groups below are replaced (create_before_destroy) rather than
+  # edited. The private subnets are /19s with almost nothing in them, so
+  # there is plenty of contiguous /28 space for prefixes.
+  configuration_values = jsonencode({
+    env = {
+      ENABLE_PREFIX_DELEGATION = "true"
+      # Keep one spare /28 attached, so a new pod starts without waiting for
+      # an AWS API call to attach another prefix.
+      WARM_PREFIX_TARGET = "1"
+    }
+  })
 }
 
 resource "aws_eks_addon" "kube_proxy" {
@@ -164,8 +185,12 @@ resource "aws_iam_role_policy_attachment" "node" {
 }
 
 resource "aws_eks_node_group" "ondemand" {
-  cluster_name    = aws_eks_cluster.this.name
-  node_group_name = "ng-ondemand"
+  cluster_name = aws_eks_cluster.this.name
+  # A prefix, not a fixed name, so a replacement group can exist alongside
+  # the old one (create_before_destroy below): new node up and Ready first,
+  # then the old group is drained and deleted. Workloads move; they are not
+  # left with zero nodes in between.
+  node_group_name_prefix = "ng-ondemand-"
   node_role_arn   = aws_iam_role.node.arn
   subnet_ids      = local.private_subnet_ids
 
@@ -189,6 +214,7 @@ resource "aws_eks_node_group" "ondemand" {
   }
 
   lifecycle {
+    create_before_destroy = true
     # Scaling up and down (scale scripts, a future autoscaler) changes the
     # desired size outside Terraform; don't fight it on every plan.
     ignore_changes = [scaling_config[0].desired_size]
@@ -202,8 +228,8 @@ resource "aws_eks_node_group" "ondemand" {
 }
 
 resource "aws_eks_node_group" "spot" {
-  cluster_name    = aws_eks_cluster.this.name
-  node_group_name = "ng-spot"
+  cluster_name           = aws_eks_cluster.this.name
+  node_group_name_prefix = "ng-spot-"
   node_role_arn   = aws_iam_role.node.arn
   subnet_ids      = local.private_subnet_ids
 
@@ -237,7 +263,8 @@ resource "aws_eks_node_group" "spot" {
   }
 
   lifecycle {
-    ignore_changes = [scaling_config[0].desired_size]
+    create_before_destroy = true
+    ignore_changes        = [scaling_config[0].desired_size]
   }
 
   depends_on = [
