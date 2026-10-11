@@ -14,5 +14,6 @@ same values.
 | `polaris_catalog.sh` | Polaris pod `Running` | Trino (needs the catalog to exist) |
 | `trino.sh` | `polaris_catalog.sh` | moving `next/trino.yaml` to `apps/` in vpn-data-platform-apps (and deleting the old `trino` record in Cloudflare) |
 | `monitoring.sh` | stage 07 (any time the cluster is up) | moving `next/monitoring.yaml` to `apps/` in vpn-data-platform-apps (and deleting the old `grafana` and `prometheus` records in Cloudflare) |
+| `harbor.sh` | `terraform/08_registry` | moving `next/harbor.yaml` to `apps/` in vpn-data-platform-apps (and deleting the old `harbor` record in Cloudflare) |
 
 All need Tailscale connected (kubectl, and psql to RDS, go through it).
