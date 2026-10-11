@@ -11,5 +11,6 @@ same values.
 | Script | Run after | Before pushing |
 |---|---|---|
 | `polaris.sh` | `terraform/06_data_foundation` | `git mv argocd/next/polaris.yaml argocd/apps/` |
+| `polaris_catalog.sh` | Polaris pod `Running` | Trino (needs the catalog to exist) |
 
 All need Tailscale connected (kubectl, and psql to RDS, go through it).
