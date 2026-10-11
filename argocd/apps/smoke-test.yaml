@@ -1,0 +1,32 @@
+# First Application through git: the same nginx probe as stage 04, but
+# deployed by Argo CD instead of `kubectl apply`. Proves the whole loop:
+#
+#   git push -> root sees a new file here -> creates this Application
+#   -> it deploys argocd/workloads/smoke-test -> controller builds the ALB rule
+#   -> external-dns writes test.nopega.net -> https://test.nopega.net answers
+#
+# Remove it by deleting this file and pushing. It occupies one of the
+# node's 17 pod slots, so delete it before adding real components.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: smoke-test
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/nopega/VPN_DATA_PLATFORM.git
+    targetRevision: main
+    path: argocd/workloads/smoke-test
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: smoke-test
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

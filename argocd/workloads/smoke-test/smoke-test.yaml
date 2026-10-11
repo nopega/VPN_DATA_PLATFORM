@@ -1,0 +1,66 @@
+# nginx at https://test.nopega.net behind the shared internal ALB.
+# Same as terraform/04_ingress/smoke-test.yaml minus the Namespace object
+# (the Application creates it with CreateNamespace=true).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: smoke-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: nginx }
+  template:
+    metadata:
+      labels: { app: nginx }
+    spec:
+      containers:
+        - name: nginx
+          image: public.ecr.aws/docker/library/nginx:alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: smoke-test
+spec:
+  selector: { app: nginx }
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx
+  namespace: smoke-test
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.name: vpn-data-platform-internal
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/inbound-cidrs: 10.42.0.0/16
+    alb.ingress.kubernetes.io/healthcheck-path: /
+spec:
+  ingressClassName: alb
+  tls:
+    - hosts:
+        - test.nopega.net
+  rules:
+    - host: test.nopega.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx
+                port:
+                  number: 80
