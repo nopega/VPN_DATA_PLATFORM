@@ -16,5 +16,6 @@ same values.
 | `monitoring.sh` | stage 07 (any time the cluster is up) | moving `next/monitoring.yaml` to `apps/` in vpn-data-platform-apps (and deleting the old `grafana` and `prometheus` records in Cloudflare) |
 | `harbor.sh` | `terraform/08_registry` | moving `next/harbor.yaml` to `apps/` in vpn-data-platform-apps (and deleting the old `harbor` record in Cloudflare) |
 | `spark.sh` | `terraform/09_spark`, Harbor project `ice-berg-platform` exists | building the image and moving `next/spark-operator.yaml` to `apps/` in vpn-data-platform-apps |
+| `airflow.sh` (then `airflow.sh admin`) | `terraform/10_airflow` | moving `next/airflow.yaml` to `apps/` (and deleting the old `airflow` record in Cloudflare); `admin` once the api-server pod is Running |
 
 All need Tailscale connected (kubectl, and psql to RDS, go through it).
