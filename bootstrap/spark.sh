@@ -198,6 +198,16 @@ fi
 polaris PUT "$M/principals/$PRINCIPAL/principal-roles" "{\"principalRole\":{\"name\":\"$PRINCIPAL\"}}"; ok_or_exists "principal role -> principal"
 echo "      grants: $PRINCIPAL -> $PRINCIPAL -> $CATALOG/$PRINCIPAL (CATALOG_MANAGE_CONTENT)"
 
+# Namespaces the pipelines write into (dags/nyc_taxi_medallion). Spark's
+# createOrReplace makes tables, not namespaces; a missing one fails the first
+# bronze run with NoSuchNamespaceException.
+for ns in bronze silver gold bronze.transactional silver.derived gold.aggregate; do
+  polaris POST "/api/catalog/v1/$CATALOG/namespaces" \
+    "$(python3 -c "import json,sys; print(json.dumps({'namespace': sys.argv[1].split('.')}))" "$ns")"
+  ok_or_exists "namespace $ns"
+done
+echo "      namespaces: bronze.transactional silver.derived gold.aggregate"
+
 # ---------------------------------------------------------------------------
 # 4. Secret spark-polaris-credentials
 # ---------------------------------------------------------------------------
