@@ -174,10 +174,22 @@ M="/api/management/v1"
 
 polaris POST "$M/principal-roles" "{\"principalRole\":{\"name\":\"$PRINCIPAL\"}}"; ok_or_exists "principal role"
 polaris POST "$M/catalogs/$CATALOG/catalog-roles" "{\"catalogRole\":{\"name\":\"$PRINCIPAL\"}}"; ok_or_exists "catalog role"
-polaris PUT "$M/catalogs/$CATALOG/catalog-roles/$PRINCIPAL/grants" \
-  '{"grant":{"type":"catalog","privilege":"CATALOG_MANAGE_CONTENT"}}'; ok_or_exists "grant"
-polaris PUT "$M/principal-roles/$PRINCIPAL/catalog-roles/$CATALOG" \
-  "{\"catalogRole\":{\"name\":\"$PRINCIPAL\"}}"; ok_or_exists "catalog role -> principal role"
+# Polaris answers a repeated grant or assignment with HTTP 500 (duplicate
+# key), not 409, so each one is checked before it is made.
+has() { python3 -c "import json,sys
+d=json.load(open(sys.argv[1])); s=json.dumps(d)
+sys.exit(0 if sys.argv[2] in s else 1)" "$BODY" "$1"; }
+
+polaris GET "$M/catalogs/$CATALOG/catalog-roles/$PRINCIPAL/grants"
+if ! has CATALOG_MANAGE_CONTENT; then
+  polaris PUT "$M/catalogs/$CATALOG/catalog-roles/$PRINCIPAL/grants" \
+    '{"grant":{"type":"catalog","privilege":"CATALOG_MANAGE_CONTENT"}}'; ok_or_exists "grant"
+fi
+polaris GET "$M/principal-roles/$PRINCIPAL/catalog-roles/$CATALOG"
+if ! has "\"$PRINCIPAL\""; then
+  polaris PUT "$M/principal-roles/$PRINCIPAL/catalog-roles/$CATALOG" \
+    "{\"catalogRole\":{\"name\":\"$PRINCIPAL\"}}"; ok_or_exists "catalog role -> principal role"
+fi
 
 if secret_exists "$POLARIS_ETL"; then
   echo "      reusing $POLARIS_ETL"
@@ -195,7 +207,10 @@ else
     | secret_create "$POLARIS_ETL"
   echo "      created; saved to $POLARIS_ETL"
 fi
-polaris PUT "$M/principals/$PRINCIPAL/principal-roles" "{\"principalRole\":{\"name\":\"$PRINCIPAL\"}}"; ok_or_exists "principal role -> principal"
+polaris GET "$M/principals/$PRINCIPAL/principal-roles"
+if ! has "\"$PRINCIPAL\""; then
+  polaris PUT "$M/principals/$PRINCIPAL/principal-roles" "{\"principalRole\":{\"name\":\"$PRINCIPAL\"}}"; ok_or_exists "principal role -> principal"
+fi
 echo "      grants: $PRINCIPAL -> $PRINCIPAL -> $CATALOG/$PRINCIPAL (CATALOG_MANAGE_CONTENT)"
 
 # Namespaces the pipelines write into (dags/nyc_taxi_medallion). Spark's
