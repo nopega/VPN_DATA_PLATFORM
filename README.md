@@ -1,75 +1,166 @@
 # vpn_data_platform
 
-The Iceberg platform from the take-home (`ice-berg-platform`, kept in
-`linemman_wong_nai_test/problem2_answer/`), rebuilt so that **nobody reaches
-it from the open internet**. Users join a Tailscale network instead, and the
-load balancer becomes internal.
+**An open-source lakehouse on Amazon EKS that has no public endpoint at all.**
 
-## Why
+A personal project to run a complete open-source data stack end to end:
+Apache Iceberg tables in S3, an Apache Polaris catalog, Spark for writing,
+Trino for reading, Airflow for orchestration, plus the platform around them —
+a private registry, GitOps, CI, autoscaling and monitoring. Everyone reaches
+it over Tailscale; nothing listens on the internet except the VPN port.
 
-The original platform put one internet-facing Application Load Balancer in
-front of every service and protected it with a source-address allowlist. That
-broke three times, each time because a home router picked up a new public
-address — see the domain-unreachable runbook from the original build. An allowlist also
-cannot scale past one person: every user's address changes, and changes again
-whenever they move between networks.
+Infrastructure is this repository (Terraform, 11 stages). What runs inside
+the cluster is **[vpn-data-platform-apps](https://github.com/nopega/vpn-data-platform-apps)**,
+reconciled by Argo CD.
 
-The fix is to check **who** someone is, not **where** they connect from.
+![Data flow — from source to dashboard](docs/diagrams/data-flow.png)
+
+## Highlights
+
+### 🔒 Private by design
+- **No public endpoint.** One internal Application Load Balancer serves every
+  web UI and Trino; the EKS API is private; RDS is in-VPC only.
+- **Tailscale instead of an IP allowlist.** Access is tied to a person and a
+  device, not a home address that changes. Adding a user is one invitation.
+- **Real hostnames and TLS anyway.** A wildcard ACM certificate and
+  external-dns publish `*.nopega.net` — the names resolve to private
+  addresses, so they only work on the tailnet.
+
+### 🧊 Open lakehouse on Apache Iceberg
+- **One catalog, two engines.** Spark writes and Trino reads the same Iceberg
+  tables through the Polaris REST catalog. Neither engine is tied to the other,
+  or to AWS.
+- **Credential vending.** Engines hold no bucket-wide S3 access. Polaris hands
+  out short-lived credentials scoped to the table being read or written, and
+  Spark writes as a dedicated `etl` principal.
+- **Medallion layout that is also the policy.** `bronze` → `silver` → `gold`,
+  with the data category in the path, so retention and deletion rules key on
+  where a table lives ([DATA_TIER.md](docs/DATA_TIER.md)).
+
+### 🔁 Pipelines that are safe to re-run
+- **Airflow 3 with KubernetesExecutor.** Every task is its own pod, every
+  transformation is a `SparkApplication` — no Celery broker, no idle workers.
+- **One partition per run.** Each step replaces its own partition, so a retry
+  after a half-finished write cannot double a number.
+- **Lineage on every row.** Bronze carries `_ingested_at`, `_source_file` and
+  `_run_id`, so a gold number traces back to the file and the job behind it.
+- **DAGs from git.** git-sync pulls DAGs from the apps repository; pipeline
+  code is fetched by the Spark driver at start.
+
+### 🚀 GitOps and CI, all inside the VPC
+- **Argo CD app-of-apps.** Nothing is `kubectl apply`'d by hand; a rollback is
+  a `git revert`.
+- **Tag to image in one step.** Pushing a `spark-v*` git tag starts a GitHub
+  Actions job on self-hosted runners **inside the cluster** (Actions Runner
+  Controller), which builds the image and pushes it to Harbor.
+- **Private registry.** Harbor stores images in S3; Spark pulls with a
+  read-only robot account and CI pushes with its own.
+
+### 🪪 No static keys in pods
+- **EKS Pod Identity** for every workload that touches AWS — six roles, each
+  scoped to what it needs. The one exception (Harbor's S3 driver) is a
+  single-bucket key, documented.
+- **Secrets generated, never typed.** `bootstrap/*.sh` generates every
+  credential, stores it in AWS Secrets Manager, and writes it into the cluster.
+  None is in git or shell history.
+- **Least privilege for people too.** BI accounts read `gold` only; one
+  operator account can write ([DATA_GOVERNANCE.md](docs/DATA_GOVERNANCE.md)).
+
+### 💸 Cost-aware, and parkable
+- **Karpenter + Spot at zero.** Spark executors and CI runners get Spot nodes
+  for the minutes a job runs, then the nodes are gone.
+- **Small fixed costs.** The Tailscale router doubles as the NAT (~\$8/month
+  instead of a NAT gateway), an S3 gateway endpoint keeps data traffic free,
+  and every hostname shares one load balancer.
+- **Park it overnight.** `scripts/scale.sh down` takes it from about
+  \$9.7/day to about \$3.8/day; `up` brings everything back from git
+  ([COST.md](docs/COST.md)).
+
+### 📈 Observable
+- Prometheus and Grafana cover the cluster, the nodes, Trino and Airflow
+  (through StatsD), with 7 days / 18 GiB of local retention.
+
+## Architecture
+
+### Infrastructure — AWS, private by design
+![AWS EKS infrastructure](docs/diagrams/eks-infrastructure.png)
+
+### Data platform — what runs on Kubernetes
+Read path (blue) and write path (orange) meet only at Polaris; the build path
+(brown) runs from a git tag to Harbor without anything connecting in.
+
+![Data platform on Kubernetes](docs/diagrams/data-platform.png)
+
+All three pages are in [`docs/diagrams/vpn_data_platform.drawio`](docs/diagrams/vpn_data_platform.drawio)
+— open it in [draw.io](https://app.diagrams.net/) to edit.
+
+## Stack
+
+| Layer | Component |
+|---|---|
+| Table format · catalog | Apache Iceberg 1.11.0 · Apache Polaris 1.5.0 |
+| Processing · query | Apache Spark 4.0.1 (Kubeflow Spark Operator 2.5.0) · Trino 480 |
+| Orchestration | Apache Airflow 3.2.2, KubernetesExecutor |
+| Registry · CI | Harbor 2.15.1 · GitHub Actions on Actions Runner Controller 0.15.0 |
+| Delivery · scaling | Argo CD · Karpenter 1.14.1 |
+| Monitoring | Prometheus 3.13.2 · Grafana 13.1.3 · Alertmanager |
+| AWS | EKS 1.36 · S3 · RDS PostgreSQL 17 · ALB · ACM · Secrets Manager |
+| Network · infrastructure as code | Tailscale · Terraform |
+
+Every version, why it was chosen, and how the versions constrain each other:
+[COMPONENTS.md](docs/COMPONENTS.md).
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [COMPONENTS.md](docs/COMPONENTS.md) | every component, version compatibility, why this stack, planned upgrades |
+| [DATA_TIER.md](docs/DATA_TIER.md) | buckets, warehouse layout, data categories, storage tiers and retention |
+| [DATA_GOVERNANCE.md](docs/DATA_GOVERNANCE.md) | network, access control, Pod Identity, secrets, lineage — and the gaps |
+| [COST.md](docs/COST.md) | running and parked cost, and every decision made for money |
+| [BACKLOG.md](BACKLOG.md) | known gaps and what is next |
+| [bootstrap/README.md](bootstrap/README.md) | one-time secret and database steps, and their order |
+
+## Repository layout
 
 ```
-before:  user ──internet──▶ ALB (public, allowlist) ──▶ pod
-after:   user ──Tailscale──▶ subnet router in the VPC ──▶ ALB (internal) ──▶ pod
+terraform/   11 stages, each applied on its own
+bootstrap/   one-time secrets and database setup per component
+scripts/     scale.sh — park and unpark the platform
+docs/        the documents above and the diagrams
 ```
 
-What changes as a result:
+| Stage | Creates |
+|---|---|
+| `01_vpc` | VPC `10.42.0.0/16` in 2 zones, subnets, S3 gateway endpoint |
+| `02_tailscale_router` | `t4g.nano` Tailscale subnet router, also the NAT for private subnets |
+| `03_eks` | EKS 1.36 with a private API endpoint, one `t3.xlarge` system node |
+| `04_ingress` | wildcard certificate, AWS Load Balancer Controller, external-dns |
+| `05_argocd` | Argo CD and the root Application that watches the apps repository |
+| `06_data_foundation` | warehouse and logs buckets, RDS PostgreSQL 17, Polaris IAM roles |
+| `07_karpenter` | Karpenter controller, Spot interruption queue (NodePools live in the apps repo) |
+| `08_registry` | Harbor's S3 bucket and scoped IAM user |
+| `09_spark` | Spark Pod Identity role (event logs only) |
+| `10_airflow` | Airflow Pod Identity role (task logs only) |
+| `11_ci` | Actions Runner Controller and the runner scale set |
 
-- The load balancer has no public address, so there is no allowlist to keep up to date.
-- Adding a user means inviting them to the Tailscale network, nothing else.
-- Nodes pull from Harbor inside the VPC instead of leaving through the NAT and
-  coming back in through the public load balancer.
-- Hostnames, the certificate and Cloudflare stay as they are. The names simply
-  resolve to private addresses that only work for someone on Tailscale.
-
-## Stages
-
-Built with Terraform, one folder per stage, each applied on its own.
-
-| Stage | What it creates | Cost while it exists | Status |
-|---|---|---|---|
-| `terraform/01_vpc` | VPC, subnets in 2 zones (as in the diagram), internet gateway, route tables, S3 gateway endpoint; NAT optional | **$0** (NAT off) | written |
-| `terraform/02_tailscale_router` | one t4g.nano: Tailscale subnet router for `10.42.0.0/16` **and** NAT instance for the private subnets | ~$8.50/mo | written |
-| `terraform/03_eks` | EKS 1.36, **private API endpoint only**, 1 × t3.xlarge on-demand, Spot group at 0, prefix delegation (110 pods/node) | ~$230/mo (control plane ~$73 + node ~$157) | written |
-| `terraform/04_ingress` | wildcard certificate `*.nopega.net`, AWS Load Balancer Controller, external-dns; `smoke-test.yaml` proves the path | ~$18/mo once an internal ALB exists | written |
-| `terraform/05_argocd` | Argo CD v3.5.0 at `argocd.nopega.net`, on the shared internal ALB | $0 extra (shares the ALB) | written |
-| apps | **[vpn-data-platform-apps](https://github.com/nopega/vpn-data-platform-apps)** — what runs in the cluster. `root` is created by stage 05 and watches its `apps/` folder | — | separate repo |
-| `bootstrap/` | one-time secrets/database steps an app needs before Argo CD starts it (they touch AWS, so they live here) | — | polaris, trino |
-| `terraform/06_data_foundation` | warehouse + logs buckets, RDS PostgreSQL 17, Polaris IAM roles (Pod Identity) | ~$21/mo | written |
-| `terraform/07_karpenter` | Karpenter 1.14.1 (controller IAM via Pod Identity, Spot interruption queue, discovery tags). NodePools live in the apps repo | cents + the nodes it launches | written |
-| later | monitoring, Harbor, Airflow, Spark operator — as Argo CD Applications in the apps repo | — | not started |
-
-Known gaps and their deadlines: [BACKLOG.md](BACKLOG.md).
-
-### How private subnets reach the internet
-
-Private subnets have no route to the internet until something gives them one.
-Nodes need it to pull public images. Decision: the Tailscale router in stage
-02 doubles as a NAT instance (~$8.50/mo for both jobs) instead of the managed
-NAT gateway (~$47/mo in Singapore, $0.059/hr + public address, plus
-$0.045/GB). The cost of that choice is one machine as a shared point of
-failure for the way in and the way out. The NAT gateway remains available as
-`enable_nat_gateway = true` in stage 01 (with `act_as_nat = false` in 02).
-
-Destroy stages in reverse order: 06, 05, 04, 03, 02, then 01 — and before 04, delete
-every Ingress (`kubectl delete -f smoke-test.yaml`), or its ALB is orphaned.
-
-## Running a stage
+## Running it
 
 ```bash
+# each stage, in order
 cd terraform/01_vpc
-terraform init
-terraform plan        # read it: with the defaults, nothing in it should cost money
-terraform apply
-terraform output subnet_layout
+terraform init && terraform apply
 
-terraform destroy     # when finished
+# then the matching bootstrap script, when bootstrap/README.md says so
+./bootstrap/polaris.sh
+
+# day to day
+./scripts/scale.sh down     # park: no worker nodes, RDS stopped
+./scripts/scale.sh up       # back: nodes, RDS, Argo CD restores the rest
+./scripts/scale.sh status
 ```
+
+Tailscale must be connected for `kubectl`, the bootstrap scripts and every UI.
+
+**Tear down** in reverse order, 11 back to 01. Before `04_ingress`, delete every
+Ingress (or the ALB is orphaned); before `07_karpenter`, let Karpenter remove
+its own nodes.
