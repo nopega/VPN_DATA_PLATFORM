@@ -117,6 +117,7 @@ Every version, why it was chosen, and how the versions constrain each other:
 | [DATA_TIER.md](docs/DATA_TIER.md) | buckets, warehouse layout, data categories, storage tiers and retention |
 | [DATA_GOVERNANCE.md](docs/DATA_GOVERNANCE.md) | network, access control, Pod Identity, secrets, lineage — and the gaps |
 | [COST.md](docs/COST.md) | running and parked cost, and every decision made for money |
+| [REBUILD.md](docs/REBUILD.md) | park vs destroy, tear-down order, and rebuilding from nothing |
 | [BACKLOG.md](BACKLOG.md) | known gaps and what is next |
 | [bootstrap/README.md](bootstrap/README.md) | one-time secret and database steps, and their order |
 
@@ -161,6 +162,6 @@ terraform init && terraform apply
 
 Tailscale must be connected for `kubectl`, the bootstrap scripts and every UI.
 
-**Tear down** in reverse order, 11 back to 01. Before `04_ingress`, delete every
+**Tear down** in reverse order, 11 back to 01 — step by step in [REBUILD.md](docs/REBUILD.md). Before `04_ingress`, delete every
 Ingress (or the ALB is orphaned); before `07_karpenter`, let Karpenter remove
 its own nodes.
