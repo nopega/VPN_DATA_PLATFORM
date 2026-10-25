@@ -70,9 +70,6 @@ resource "helm_release" "argocd" {
       }
     }
 
-    # root Application -> apps/ in the app repository (root.tf).
-    extraObjects = [local.root_application]
-
     controller     = { resources = local.resources.controller }
     repoServer     = { resources = local.resources.repoServer }
     applicationSet = { resources = local.resources.applicationSet }
@@ -93,4 +90,26 @@ resource "helm_release" "argocd" {
     dex           = { enabled = false }
     notifications = { enabled = false }
   })]
+}
+
+# root Application -> apps/ in the app repository (root.tf).
+#
+# A release of its own, not the Argo CD chart's extraObjects: Helm checks
+# every object's kind against the API server before installing anything, and
+# on a fresh cluster the Application CRD does not exist until the Argo CD
+# chart itself has installed it ("no matches for kind Application ... ensure
+# CRDs are installed first"). Installing root second, after Argo CD, avoids
+# that chicken-and-egg.
+#
+# Uninstalling this release deletes root, and root's finalizer then deletes
+# every Application and everything they deployed -- the same cascade as
+# `kubectl delete application root` (docs/REBUILD.md).
+resource "helm_release" "root" {
+  name      = "root-app"
+  namespace = "argocd"
+  chart     = "${path.module}/root-chart"
+
+  values = [yamlencode({ application = local.root_application })]
+
+  depends_on = [helm_release.argocd]
 }

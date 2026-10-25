@@ -1,0 +1,5 @@
+apiVersion: v2
+name: root-app
+description: The root Argo CD Application (app-of-apps), installed after Argo CD so its CRDs exist.
+type: application
+version: 0.1.0

@@ -1,5 +1,5 @@
-# The `root` Application, created by the same Helm release that installs
-# Argo CD (via the chart's extraObjects). A fresh cluster is therefore wired
+# The `root` Application, installed by its own small Helm release right after
+# Argo CD (helm_release.root in main.tf, chart in root-chart/). A fresh cluster is therefore wired
 # to its app repository with no manual `kubectl apply`: Argo CD starts, reads
 # apps/ in the app repo, and installs everything in sync-wave order.
 
